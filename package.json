@@ -45,6 +45,8 @@
     "url": "https://github.com/pantalejmon/s-mqtt"
   },
   "dependencies": {
-    "aedes": "^0.42.5"
+    "@types/eccrypto": "^1.1.1",
+    "aedes": "^0.42.5",
+    "eccrypto": "^1.1.3"
   }
 }
