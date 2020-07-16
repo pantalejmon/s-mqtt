@@ -1,64 +1,62 @@
-import aedes, {Aedes, AedesPublishPacket, Client} from 'aedes';
+import aedes, {Aedes, AedesPublishPacket, Client, Subscription} from 'aedes';
 import net from 'net';
 import {SecureClient} from './client';
 import {Buffer} from 'buffer';
-import {Ecies} from 'eccrypto';
+import {Keys} from './keys';
 
 export class Broker {
-    private aedes: Aedes = aedes({authorizeForward: this.forwardHandler.bind(this)});
+    private CONFIG_TOPIC = 'initial';
+    private aedes: Aedes = aedes({authorizeForward: this.forwardHandler.bind(this), authorizePublish: this.decodeMessage.bind(this)});
     private server;
     private clients: Array<SecureClient> = [];
 
     constructor(port: number) {
         this.server = net.createServer(this.aedes.handle);
-        this.server.listen(port, () => console.log(`S-MQTT server starts on port: ${port}`));
+        this.server.listen(port, () => console.log(`[INFO] S-MQTT server starts on port: ${port}`));
 
-        this.aedes.on('client', (client: Client) => {
-            this.clients.push(new SecureClient(client));
-            const cmd: 'publish' = 'publish';
-            const qos: 0 | 1 | 2 = 0;
-            const packet = {
-                qos,
-                retain: true,
-                topic: 'initial',
-                payload: `Welcome ${client.id}`,
-                dup: false,
-                cmd
-            };
-            client.publish(packet, () => console.log(`Przywitano ${client.id}`));
-        });
+        this.aedes.on('client', this.prepareUser.bind(this));
+        this.aedes.on('subscribe', this.reloadSubscribtion.bind(this));
+    }
 
-        this.aedes.on('subscribe', (sub, client) => {
-            for (const t of this.clients) {
-                if (t.baseClient === client) {
-                    t.subscription = sub;
-                }
+    async decodeMessage(client: Client, data: AedesPublishPacket, callback) {
+        if (client) {
+            try {
+                const inputJson = JSON.parse((data.payload as string));
+                inputJson.iv = Buffer.from(inputJson.iv);
+                inputJson.ephemPublicKey = Buffer.from(inputJson.ephemPublicKey);
+                inputJson.ciphertext = Buffer.from(inputJson.ciphertext);
+                inputJson.mac = Buffer.from(inputJson.mac);
+                const user = this.findUser(client);
+                data.payload = await user.decryptInput(inputJson);
+            } catch {
+                console.log('[INFO] Invalid syntax from clientId: ' + client.id + ' data: ' + data.payload);
             }
-        });
+            callback();
+        }
     }
 
-
+    /**
+     * Message forwarder
+     * @param client - target client
+     * @param data   - mqtt packet
+     */
     forwardHandler(client: Client, data: AedesPublishPacket) {
-        console.log('tp1 ' + client + ' ' + data.payload);
-        const newData = {...data};
-
-        const secureClient = this.findUser(client);
-        secureClient.encryptOutput(data.payload as Buffer).then(datae => {
-
-            const ecies: Ecies = datae;
-            newData.payload = JSON.stringify(ecies);
-            const json: any = JSON.parse(JSON.stringify(ecies));
-
-            json.iv = Buffer.from(json.iv);
-            json.ephemPublicKey = Buffer.from(json.ephemPublicKey);
-            json.ciphertext = Buffer.from(json.ciphertext);
-            json.mac = Buffer.from(json.mac);
-
-            secureClient.decryptInput(json).then(datad => console.log('Po odczytaniu: ' + datad.toString()));
-        });
-        return newData;
+        if (data.topic !== this.CONFIG_TOPIC) {
+            const newData = {...data};
+            const secureClient = this.findUser(client);
+            secureClient.encryptOutput(data.payload as Buffer).then(ecies => {
+                newData.payload = Buffer.from(JSON.stringify(ecies));
+            });
+            return newData;
+        } else {
+            return data;
+        }
     }
 
+    /**
+     * Method for recognize user in memory
+     * client
+     */
     findUser(client: Client): SecureClient {
         for (const c of this.clients) {
             if (c.baseClient === client) {
@@ -66,5 +64,39 @@ export class Broker {
             }
         }
         return null;
+    }
+
+    /**
+     * Method to initialize client after connect to broker
+     * param client
+     */
+    prepareUser(client: Client) {
+        const sclient = new SecureClient(client);
+        this.clients.push(sclient);
+        const cmd: 'publish' = 'publish';
+        const qos: 0 | 1 | 2 = 0;
+        const keys: Keys = {outputPrivateKey: sclient.outputPrivateKey, inputPublicKey: sclient.inputPublicKey};
+        const packet = {
+            qos,
+            retain: true,
+            topic: 'initial',
+            payload: JSON.stringify(keys),
+            dup: false,
+            cmd
+        };
+        client.publish(packet, () => console.log(`[INFO] user ${sclient.baseClient.id} connected`));
+    }
+
+    /**
+     * Method to reload new subscribtion
+     * param sub
+     * param client
+     */
+    reloadSubscribtion(sub: Subscription[], client: Client) {
+        for (const t of this.clients) {
+            if (t.baseClient === client) {
+                t.subscription = sub;
+            }
+        }
     }
 }

@@ -14,7 +14,7 @@ export class SecureClient {
     }
 
     async decryptInput(data: Ecies): Promise<Buffer> {
-        return await eccrypto.decrypt(this.outputPrivateKey, data);
+        return await eccrypto.decrypt(this.inputPrivateKey, data);
     }
 
     async encryptOutput(data: Buffer): Promise<Ecies> {

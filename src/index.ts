@@ -1,3 +1,5 @@
 import {Broker} from './broker/broker';
 
-const broker = new Broker(1883);
+export function smqtt(port: number) {
+    return new Broker(port);
+}
