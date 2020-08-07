@@ -21,7 +21,10 @@ export class Broker {
     async decodeMessage(client: Client, data: AedesPublishPacket, callback) {
         if (client) {
             try {
-                const inputJson = JSON.parse((data.payload as string));
+                const inputString = Buffer
+                    .from(data.payload.toString('utf8'), 'base64')
+                    .toString('utf8');
+                const inputJson = JSON.parse(inputString);
                 inputJson.iv = Buffer.from(inputJson.iv);
                 inputJson.ephemPublicKey = Buffer.from(inputJson.ephemPublicKey);
                 inputJson.ciphertext = Buffer.from(inputJson.ciphertext);
@@ -44,9 +47,11 @@ export class Broker {
         if (data.topic !== this.CONFIG_TOPIC) {
             const newData = {...data};
             const secureClient = this.findUser(client);
-            secureClient.encryptOutput(data.payload as Buffer).then(ecies => {
-                newData.payload = Buffer.from(JSON.stringify(ecies));
-            });
+            secureClient.encryptOutput(data.payload as Buffer)
+                .then(ecies => {
+                    const encodedMessage = Buffer.from(JSON.stringify(ecies)).toString('base64');
+                    newData.payload = Buffer.from(JSON.stringify(encodedMessage));
+                });
             return newData;
         } else {
             return data;
@@ -71,6 +76,7 @@ export class Broker {
      * param client
      */
     prepareUser(client: Client) {
+        console.log('new user:' + client.id);
         const sclient = new SecureClient(client);
         this.clients.push(sclient);
         const cmd: 'publish' = 'publish';
